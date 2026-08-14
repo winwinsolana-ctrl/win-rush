@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>WIN Rush: Turbo Track</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src='//libtl.com/sdk.js' data-zone='11311841' data-sdk='show_11311841'></script>
+<!-- Firebase (Firestore) — used once FIREBASE_CONFIG below is filled in -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --bg:#0A0D14;
+    --asphalt:#14161F;
+    --cyan:#00E5FF;
+    --magenta:#FF2E6C;
+    --amber:#FFC93C;
+    --lane:#E8ECF1;
+    --violet:#6C4CE0;
+  }
+  html,body{
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:var(--bg);
+    font-family:'Rajdhani',sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    user-select:none;
+    touch-action:none;
+  }
+  .font-display{ font-family:'Orbitron',sans-serif; }
+  #gameCanvas{ display:block; touch-action:none; position:fixed; top:0; left:0; z-index:1; }
+
+  /* Tailwind CDN yüklenemezse bile ekran geçişlerinin çalışmasını garanti eden yedek kurallar */
+  .hidden{ display:none !important; }
+  #menuScreen.flex, #gameOverScreen.flex, #shopScreen.flex, #lbScreen.flex, #pauseScreen.flex, #adScreen.flex{
+    display:flex !important;
+  }
+  #shopScreen, #lbScreen{ flex-direction:column; }
+  #gameOverScreen, #pauseScreen, #adScreen{ align-items:center; justify-content:center; flex-direction:column; }
+
+  .glass{
+    background:rgba(10,13,20,0.55);
+    backdrop-filter: blur(10px);
+    border:1px solid rgba(255,255,255,0.08);
+  }
+  .glow-cyan{ text-shadow:0 0 12px rgba(0,229,255,0.8), 0 0 30px rgba(0,229,255,0.3); }
+  .glow-magenta{ text-shadow:0 0 12px rgba(255,46,108,0.8); }
+  .glow-amber{ text-shadow:0 0 10px rgba(255,201,60,0.7); }
+
+  .token-pill{
+    background:linear-gradient(135deg,#1a1d29,#0e1017);
+    border:1px solid rgba(255,201,60,0.35);
+    box-shadow: inset 0 0 12px rgba(255,201,60,0.08);
+  }
+
+  .btn-primary{
+    background:linear-gradient(135deg,var(--cyan),var(--violet));
+    box-shadow:0 0 20px rgba(0,229,255,0.35), 0 6px 0 rgba(0,0,0,0.35);
+  }
+  .btn-primary:active{ transform:translateY(4px); box-shadow:0 0 20px rgba(0,229,255,0.35), 0 2px 0 rgba(0,0,0,0.35); }
+
+  .btn-ghost{
+    background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.12);
+  }
+
+  .panel-enter{ animation:panelIn .28s cubic-bezier(.2,.9,.3,1) both; }
+  @keyframes panelIn{ from{opacity:0; transform:translateY(16px) scale(.98);} to{opacity:1; transform:translateY(0) scale(1);} }
+
+  .coin-pop{ animation:coinPop .5s ease-out forwards; }
+  @keyframes coinPop{
+    0%{ transform:translateY(0) scale(1); opacity:1; }
+    100%{ transform:translateY(-40px) scale(1.3); opacity:0; }
+  }
+
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .shop-card{
+    background:linear-gradient(160deg,#151826,#0c0e15);
+    border:1px solid rgba(255,255,255,0.08);
+    transition:border-color .15s, transform .1s;
+  }
+  .shop-card:active{ transform:scale(0.97); }
+  .shop-card.owned{ border-color:rgba(0,229,255,0.5); }
+  .shop-card.equipped{ border-color:var(--amber); box-shadow:0 0 16px rgba(255,201,60,0.25); }
+
+  ::-webkit-scrollbar{ width:0; height:0; }
+
+  .tab-active{ color:var(--cyan); border-bottom:2px solid var(--cyan); }
+  .tab-inactive{ color:#6b7280; border-bottom:2px solid transparent; }
+
+  .lb-row:nth-child(1) .rank{ color:var(--amber); }
+  .lb-row:nth-child(2) .rank{ color:#C7CCD8; }
+  .lb-row:nth-child(3) .rank{ color:#CD8A4A; }
+</style>
+</head>
+<body class="text-white">
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD (in-game) -->
+<div id="hud" class="fixed top-0 left-0 right-0 z-20 flex justify-between items-start p-3 pointer-events-none" style="padding-top:max(12px, env(safe-area-inset-top));">
+  <div class="glass rounded-2xl px-4 py-2 pointer-events-auto">
+    <div class="text-[10px] tracking-widest text-gray-400 font-display">DISTANCE</div>
+    <div id="hudDistance" class="text-xl font-display font-800 glow-cyan">0m</div>
+  </div>
+  <div class="token-pill rounded-2xl px-4 py-2 flex items-center gap-2 pointer-events-auto">
+    <div class="w-5 h-5 rounded-full flex items-center justify-center font-display text-[13px] font-900" style="background:radial-gradient(circle at 30% 30%, #B9FBFF, var(--cyan));color:#003b45;">⚡</div>
+    <div id="hudSparks" class="text-lg font-display font-700 glow-cyan">0</div>
+  </div>
+  <button id="pauseBtn" class="glass rounded-2xl w-10 h-10 pointer-events-auto flex items-center justify-center text-xl">⏸</button>
+</div>
+
+<!-- Touch lanes (invisible tap zones) -->
+<div id="touchLeft" class="fixed left-0 top-0 bottom-0 w-1/2 z-10"></div>
+<div id="touchRight" class="fixed right-0 top-0 bottom-0 w-1/2 z-10"></div>
+
+<!-- MAIN MENU -->
+<div id="menuScreen" class="fixed inset-0 z-30 flex flex-col" style="background:radial-gradient(ellipse at 50% 0%, #1a1030 0%, #0A0D14 60%);">
+  <div class="flex-1 flex flex-col items-center justify-center px-6 panel-enter">
+    <div class="font-display font-900 text-4xl tracking-tight glow-cyan mb-1">WIN <span class="glow-magenta" style="color:var(--magenta)">RUSH</span></div>
+    <div class="font-display text-xs tracking-[0.4em] text-gray-400 mb-8">TURBO TRACK</div>
+
+    <div class="w-full max-w-xs space-y-3 mb-8">
+      <div class="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+        <span class="text-sm text-gray-400 font-display">BEST DISTANCE</span>
+        <span id="menuBest" class="font-display font-700 glow-cyan">0m</span>
+      </div>
+      <div class="token-pill rounded-2xl px-4 py-3 flex items-center justify-between">
+        <span class="text-sm text-gray-400 font-display">WIN TOKENS</span>
+        <span id="menuTokens" class="font-display font-700 glow-amber">0</span>
+      </div>
+      <div class="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+        <span class="text-sm text-gray-400 font-display">⚡ SPARKS</span>
+        <span id="menuSparks" class="font-display font-700 glow-cyan">0</span>
+      </div>
+    </div>
+
+    <button id="playBtn" class="btn-primary font-display font-800 text-lg rounded-2xl w-full max-w-xs py-4 mb-1 tracking-wide">▶ START RACE</button>
+    <div id="lockText" class="hidden text-center text-[11px] text-gray-500 font-display mb-3"></div>
+    <div class="grid grid-cols-2 gap-3 w-full max-w-xs">
+      <button id="shopBtn" class="btn-ghost rounded-2xl py-3 font-display text-sm">🛒 SHOP</button>
+      <button id="lbBtn" class="btn-ghost rounded-2xl py-3 font-display text-sm">🏆 LEADERBOARD</button>
+    </div>
+  </div>
+  <div class="text-center text-[10px] text-gray-600 pb-4 font-display tracking-widest">TAP LEFT / RIGHT TO CHANGE LANES</div>
+</div>
+
+<!-- AD (rewarded ad placeholder) -->
+<div id="adScreen" class="fixed inset-0 z-40 hidden flex-col items-center justify-center px-6" style="background:#050609;">
+  <div class="text-xs tracking-[0.3em] text-gray-500 font-display mb-4">ADVERTISEMENT</div>
+  <div class="w-20 h-20 rounded-full flex items-center justify-center mb-6" style="border:3px solid rgba(0,229,255,0.25); border-top-color:var(--cyan); animation:spin 1s linear infinite;">
+    <span class="text-2xl">🎬</span>
+  </div>
+  <div class="font-display font-700 text-lg mb-1">Watching ad…</div>
+  <div id="adCountdown" class="font-display text-sm text-gray-400">Race unlocks in 5s</div>
+</div>
+
+<!-- GAME OVER -->
+<div id="gameOverScreen" class="fixed inset-0 z-30 hidden flex-col items-center justify-center px-6" style="background:rgba(5,6,10,0.92); backdrop-filter:blur(6px);">
+  <div class="panel-enter w-full max-w-xs text-center">
+    <div class="font-display font-900 text-2xl mb-1" style="color:var(--magenta);">CRASHED!</div>
+    <div class="text-gray-400 text-sm mb-6 font-display tracking-wide">Try again and beat your record</div>
+
+    <div class="glass rounded-2xl p-4 mb-3 space-y-2">
+      <div class="flex justify-between"><span class="text-gray-400 text-sm">Distance</span><span id="finalDistance" class="font-display font-700">0m</span></div>
+      <div class="flex justify-between"><span class="text-gray-400 text-sm">Sparks Earned</span><span id="finalTokens" class="font-display font-700 glow-cyan">+0 ⚡</span></div>
+      <div id="newRecordBadge" class="hidden text-xs font-display glow-cyan pt-1">🎉 NEW RECORD!</div>
+    </div>
+
+    <button id="retryBtn" class="btn-primary font-display font-800 rounded-2xl w-full py-4 mb-3">PLAY AGAIN</button>
+    <button id="menuFromOverBtn" class="btn-ghost rounded-2xl w-full py-3 font-display text-sm">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- SHOP -->
+<div id="shopScreen" class="fixed inset-0 z-30 hidden flex-col" style="background:#0A0D14;">
+  <div class="glass px-4 py-3 flex items-center justify-between" style="padding-top:max(12px, env(safe-area-inset-top));">
+    <button id="shopBack" class="text-xl">←</button>
+    <div class="font-display font-800 tracking-wide">SHOP</div>
+    <div class="token-pill rounded-full px-3 py-1 flex items-center gap-1">
+      <span class="text-xs">🪙</span><span id="shopTokens" class="font-display text-sm glow-amber">0</span>
+    </div>
+  </div>
+  <div class="glass mx-4 mt-3 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+    <div>
+      <div class="text-[10px] tracking-widest text-gray-400 font-display">YOUR SPARKS</div>
+      <div id="shopSparksVal" class="font-display font-800 text-lg glow-cyan">⚡ 0</div>
+    </div>
+    <button id="convertBtn" class="btn-primary font-display font-700 text-xs rounded-xl px-3 py-2 whitespace-nowrap disabled:opacity-40" disabled>Need 100 ⚡</button>
+  </div>
+  <div class="flex px-4 pt-3 gap-6 border-b border-white/5">
+    <button data-tab="cars" class="shopTab tab-active pb-2 font-display text-sm">CARS</button>
+    <button data-tab="upgrades" class="shopTab tab-inactive pb-2 font-display text-sm">BOOSTS</button>
+  </div>
+  <div id="shopGrid" class="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-3"></div>
+</div>
+
+<!-- LEADERBOARD -->
+<div id="lbScreen" class="fixed inset-0 z-30 hidden flex-col" style="background:#0A0D14;">
+  <div class="glass px-4 py-3 flex items-center justify-between" style="padding-top:max(12px, env(safe-area-inset-top));">
+    <button id="lbBack" class="text-xl">←</button>
+    <div class="font-display font-800 tracking-wide">LEADERBOARD</div>
+    <div class="w-6"></div>
+  </div>
+  <div id="lbList" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
+</div>
+
+<!-- PAUSE -->
+<div id="pauseScreen" class="fixed inset-0 z-30 hidden items-center justify-center" style="background:rgba(5,6,10,0.85); backdrop-filter:blur(6px);">
+  <div class="panel-enter w-full max-w-xs text-center px-6">
+    <div class="font-display font-900 text-2xl mb-6 glow-cyan">PAUSED</div>
+    <button id="resumeBtn" class="btn-primary font-display font-800 rounded-2xl w-full py-4 mb-3">RESUME</button>
+    <button id="quitBtn" class="btn-ghost rounded-2xl w-full py-3 font-display text-sm">QUIT TO MENU</button>
+  </div>
+</div>
+
+<script>
+/* ================= TELEGRAM SDK (Mini App mode) ================= */
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); try{ tg.setBackgroundColor('#0A0D14'); }catch(e){} }
+
+/* ================= TELEGRAM GAME PLATFORM (BotFather "Game" mode) =================
+   This is a SEPARATE system from Mini Apps. When the page is opened via a
+   BotFather Game's inline "Play" button (in a private chat, group, or
+   inline result), Telegram injects `TelegramGameProxy` instead of
+   `Telegram.WebApp`, and your bot's backend is expected to have appended
+   identifying query params (user_id, chat_id, message_id or
+   inline_message_id) to the game URL when it answered the callback_query.
+   There's no client-side API for user identity here — it only exists if
+   your backend put it in the URL. */
+const IS_GAME_MODE = !!window.TelegramGameProxy;
+const gameUrlParams = new URLSearchParams(location.search);
+const GAME_USER_ID = gameUrlParams.get('user_id');
+const GAME_CHAT_ID = gameUrlParams.get('chat_id');
+const GAME_MESSAGE_ID = gameUrlParams.get('message_id');
+const GAME_INLINE_MESSAGE_ID = gameUrlParams.get('inline_message_id');
+
+/* Same-site Netlify Function that calls Telegram's setGameScore Bot API
+   method (see /netlify/functions/setGameScore.js). Relative path — no
+   CORS setup needed since it's served from this same domain. */
+const GAME_SCORE_ENDPOINT = '/.netlify/functions/setGameScore';
+
+/* Must match the GAME_SHARED_SECRET environment variable set in the
+   Netlify dashboard (Site settings → Environment variables). This is a
+   lightweight anti-spoofing check, not real security — anyone can read
+   it from this page's source — but it stops casual abuse of the
+   endpoint. Fine for a small game. */
+const GAME_SHARED_SECRET = 'REPLACE_WITH_YOUR_SHARED_SECRET';
+
+function reportGameScore(distance){
+  if (!IS_GAME_MODE) return;
+  if (GAME_SCORE_ENDPOINT && GAME_USER_ID){
+    fetch(GAME_SCORE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Game-Secret': GAME_SHARED_SECRET },
+      body: JSON.stringify({
+        user_id: GAME_USER_ID,
+        chat_id: GAME_CHAT_ID,
+        message_id: GAME_MESSAGE_ID,
+        inline_message_id: GAME_INLINE_MESSAGE_ID,
+        score: distance
+      })
+    }).catch(e=> console.error('Game score submit failed', e));
+  }
+  // Prompts Telegram's native "share your score" dialog — safe to call
+  // even if the backend submission above is skipped/unset.
+  try{ TelegramGameProxy.shareScore(); }catch(e){}
+}
+
+/* Telegram user identity — used as the Firestore document key so every
+   player's progress and leaderboard entry is tied to their real Telegram
+   account (no login screen needed, Telegram provides this automatically).
+   Falls back to the Game-mode URL params, then to a per-device guest id. */
+const TG_USER = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
+const USER_ID = TG_USER ? String(TG_USER.id)
+  : GAME_USER_ID ? 'tguser_' + GAME_USER_ID
+  : 'guest_' + (localStorage.getItem('win_guest_id') || (()=>{
+      const id = 'g' + Math.random().toString(36).slice(2,10);
+      localStorage.setItem('win_guest_id', id);
+      return id;
+    })());
+const USER_NAME = TG_USER ? (TG_USER.username ? '@'+TG_USER.username : (TG_USER.first_name || 'Player')) : 'Guest';
+
+
+/* ================= FIREBASE (fill this in to enable cloud sync + a real
+   global leaderboard) =================
+   1. Firebase Console → Project settings → Your apps → paste the config
+      object below and it activates automatically (no other code changes).
+   2. Firestore security rules should look like:
+        match /users/{userId} {
+          allow read, write: if true; // tighten later with Cloud Functions
+        }
+        match /leaderboard/{userId} {
+          allow read: if true;
+          allow write: if true;
+        }
+      (For real protection against cheating later, verify Telegram's
+      initData signature in a Cloud Function instead of allowing open
+      writes — fine for now at small scale.) */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDahiPsgLsQQChM52HbdkNZ9YHp1YAx7go",
+  authDomain: "winrush-b6f05.firebaseapp.com",
+  projectId: "winrush-b6f05",
+  storageBucket: "winrush-b6f05.firebasestorage.app",
+  messagingSenderId: "302946338237",
+  appId: "1:302946338237:web:722b59cb5e61f7684afed4",
+  measurementId: "G-6E05T4SYL1"
+};
+
+let db = null;
+if (FIREBASE_CONFIG && window.firebase){
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+  } catch(e){ console.error('Firebase init failed', e); db = null; }
+}
+
+/* ================= STORAGE (Firestore → Telegram CloudStorage → localStorage) =================
+   set() fires-and-forgets to every layer available so the game never
+   blocks on network. get() is only used for the CloudStorage/local
+   fallback path — when Firestore is enabled, loadState() reads the
+   whole user document in one call instead (see below). */
+const Storage = {
+  _local(key, val){
+    if (val === undefined) {
+      const v = localStorage.getItem(key);
+      return v;
+    }
+    localStorage.setItem(key, val);
+  },
+  get(key){
+    return new Promise((resolve)=>{
+      if (tg && tg.CloudStorage) {
+        tg.CloudStorage.getItem(key, (err, value)=> resolve(err ? this._local(key) : (value || this._local(key))));
+      } else {
+        resolve(this._local(key));
+      }
+    });
+  },
+  set(key, value){
+    this._local(key, value);
+    if (tg && tg.CloudStorage) { try{ tg.CloudStorage.setItem(key, value, ()=>{}); }catch(e){} }
+  }
+};
+
+/* Pushes the full current State to Firestore (merge write). Called after
+   every change once Firebase is enabled; no-ops otherwise. */
+function syncToFirestore(){
+  if (!db) return;
+  db.collection('users').doc(USER_ID).set({
+    name: USER_NAME,
+    tokens: State.tokens,
+    sparks: State.sparks,
+    bestDistance: State.bestDistance,
+    ownedCars: State.ownedCars,
+    equippedCar: State.equippedCar,
+    ownedUpgrades: State.ownedUpgrades,
+    nextPlayAt: State.nextPlayAt,
+    updatedAt: Date.now()
+  }, { merge:true }).catch(e=> console.error('Firestore sync failed', e));
+}
+
+/* ================= GAME STATE ================= */
+const UPGRADE_DURATION_MS = 24*60*60*1000; // boosts last 24h, then must be re-bought
+const PLAY_LOCK_MS = 24*60*60*1000; // after each race, next free race unlocks after 24h
+const SPARKS_PER_TOKEN = 100; // 100 Sparks (collected in-race) convert to 1 WIN token in the Shop
+
+const State = {
+  tokens: 0,
+  sparks: 0,
+  bestDistance: 0,
+  ownedCars: ['red'],
+  equippedCar: 'red',
+  ownedUpgrades: {}, // { upgradeId: expiryTimestampMs }
+  leaderboard: [],
+  nextPlayAt: 0
+};
+
+const CARS = [
+  { id:'red', name:'Blaze', price:0, color:'#FF3B4E', glow:'#FF3B4E' },
+  { id:'cyan', name:'Volt', price:40, color:'#00E5FF', glow:'#00E5FF' },
+  { id:'violet', name:'Nova', price:80, color:'#8B5CF6', glow:'#8B5CF6' },
+  { id:'amber', name:'Solar', price:120, color:'#FFC93C', glow:'#FFC93C' },
+  { id:'white', name:'Ghost', price:180, color:'#F1F5F9', glow:'#94A3B8' },
+  { id:'green', name:'Toxic', price:240, color:'#39FF6A', glow:'#39FF6A' },
+];
+
+const UPGRADES = [
+  { id:'magnet', name:'Coin Magnet', desc:'Attracts nearby Sparks', price:60, icon:'🧲' },
+  { id:'shield', name:'Shield', desc:'Blocks your first crash', price:90, icon:'🛡️' },
+  { id:'nitro', name:'Nitro Start', desc:'Speed boost at the start', price:80, icon:'🔥' },
+  { id:'slowmo', name:'Reflex+', desc:'Slows time in danger', price:130, icon:'⏱️' },
+];
+
+function hasUpgrade(id){
+  return !!(State.ownedUpgrades[id] && State.ownedUpgrades[id] > Date.now());
+}
+function formatRemaining(ms){
+  const totalMin = Math.max(0, Math.ceil(ms/60000));
+  const h = Math.floor(totalMin/60);
+  const m = totalMin%60;
+  return h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+}
+
+async function loadState(){
+  if (db){
+    try{
+      const doc = await db.collection('users').doc(USER_ID).get();
+      if (doc.exists){
+        const d = doc.data();
+        State.tokens = d.tokens || 0;
+        State.sparks = d.sparks || 0;
+        State.bestDistance = d.bestDistance || 0;
+        State.ownedCars = d.ownedCars && d.ownedCars.length ? d.ownedCars : ['red'];
+        State.equippedCar = d.equippedCar || 'red';
+        State.ownedUpgrades = d.ownedUpgrades || {};
+        State.nextPlayAt = d.nextPlayAt || 0;
+      }
+      const lb = await Storage.get('win_leaderboard'); State.leaderboard = lb ? JSON.parse(lb) : [];
+      refreshMenuUI();
+      return;
+    } catch(e){
+      console.error('Firestore load failed, falling back to local storage', e);
+    }
+  }
+  // Fallback: Telegram CloudStorage / localStorage (used when Firebase isn't configured)
+  const t = await Storage.get('win_tokens'); State.tokens = t ? parseInt(t) : 0;
+  const sp = await Storage.get('win_sparks'); State.sparks = sp ? parseInt(sp) : 0;
+  const b = await Storage.get('win_best'); State.bestDistance = b ? parseInt(b) : 0;
+  const oc = await Storage.get('win_cars'); State.ownedCars = oc ? JSON.parse(oc) : ['red'];
+  const ec = await Storage.get('win_equipped'); State.equippedCar = ec || 'red';
+  const ou = await Storage.get('win_upgrades');
+  if (ou){
+    try{
+      const parsed = JSON.parse(ou);
+      // migrate from old one-time-purchase array format if present
+      State.ownedUpgrades = Array.isArray(parsed) ? {} : parsed;
+    } catch(e){ State.ownedUpgrades = {}; }
+  } else {
+    State.ownedUpgrades = {};
+  }
+  const lb = await Storage.get('win_leaderboard'); State.leaderboard = lb ? JSON.parse(lb) : [];
+  const np = await Storage.get('win_next_play'); State.nextPlayAt = np ? parseInt(np) : 0;
+  refreshMenuUI();
+}
+function saveSparks(){ Storage.set('win_sparks', String(State.sparks)); syncToFirestore(); }
+function saveNextPlay(){ Storage.set('win_next_play', String(State.nextPlayAt)); syncToFirestore(); }
+function saveTokens(){ Storage.set('win_tokens', String(State.tokens)); syncToFirestore(); }
+function saveBest(){ Storage.set('win_best', String(State.bestDistance)); syncToFirestore(); }
+function saveCars(){ Storage.set('win_cars', JSON.stringify(State.ownedCars)); syncToFirestore(); }
+function saveEquipped(){ Storage.set('win_equipped', State.equippedCar); syncToFirestore(); }
+function saveUpgrades(){ Storage.set('win_upgrades', JSON.stringify(State.ownedUpgrades)); syncToFirestore(); }
+function saveLeaderboard(){ Storage.set('win_leaderboard', JSON.stringify(State.leaderboard)); }
+
+function refreshMenuUI(){
+  document.getElementById('menuBest').textContent = State.bestDistance + 'm';
+  document.getElementById('menuTokens').textContent = State.tokens;
+  document.getElementById('menuSparks').textContent = State.sparks;
+  updatePlayLockUI();
+}
+
+function isPlayLocked(){ return Date.now() < State.nextPlayAt; }
+function formatLockRemaining(){
+  const ms = State.nextPlayAt - Date.now();
+  const totalMin = Math.max(0, Math.ceil(ms/60000));
+  const h = Math.floor(totalMin/60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+function updatePlayLockUI(){
+  const btn = document.getElementById('playBtn');
+  const lockText = document.getElementById('lockText');
+  if (!btn) return;
+  if (isPlayLocked()){
+    btn.textContent = '🎬 WATCH AD TO PLAY';
+    lockText.classList.remove('hidden');
+    lockText.textContent = `Next free race in ${formatLockRemaining()}`;
+  } else {
+    btn.textContent = '▶ START RACE';
+    lockText.classList.add('hidden');
+  }
+}
+setInterval(updatePlayLockUI, 1000);
+
+/* ================= REWARDED AD (Monetag) ================= */
+function showRewardedAd(onComplete){
+  showScreen('ad');
+  const countdownEl = document.getElementById('adCountdown');
+  countdownEl.textContent = 'Loading ad…';
+
+  if (typeof show_11311841 !== 'function'){
+    // SDK failed to load (blocked, offline, ad blocker) — fail safe, don't unlock
+    countdownEl.textContent = 'Ad unavailable. Try again later.';
+    setTimeout(()=>{ showScreen('menu'); refreshMenuUI(); }, 1800);
+    return;
+  }
+
+  show_11311841('pop').then(()=>{
+    // user watched the ad fully
+    countdownEl.textContent = 'Unlocked!';
+    setTimeout(onComplete, 400);
+  }).catch(()=>{
+    // ad failed or was closed early — no reward
+    countdownEl.textContent = 'Ad skipped — no reward this time.';
+    setTimeout(()=>{ showScreen('menu'); refreshMenuUI(); }, 1800);
+  });
+}
+
+function attemptPlay(){
+  if (isPlayLocked()){
+    showRewardedAd(()=>{
+      State.nextPlayAt = 0;
+      saveNextPlay();
+      startGame();
+    });
+  } else {
+    startGame();
+  }
+}
+
+/* ================= CANVAS SETUP ================= */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W, H, DPR;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ================= GAME CONSTANTS ================= */
+const LANES = 3;
+let roadLeft, roadWidth, laneWidth;
+function computeRoad(){
+  roadWidth = Math.min(W * 0.82, 420);
+  roadLeft = (W - roadWidth) / 2;
+  laneWidth = roadWidth / LANES;
+}
+computeRoad();
+window.addEventListener('resize', computeRoad);
+
+function laneX(lane){ return roadLeft + laneWidth*(lane+0.5); }
+
+/* ================= GAME OBJECTS ================= */
+let game = null;
+
+function newGame(){
+  return {
+    running:false,
+    over:false,
+    lane:1,
+    targetLane:1,
+    carX: laneX(1),
+    carY: H*0.78,
+    speed: 4.2,
+    baseSpeed: 4.2,
+    maxSpeed: 11,
+    distance: 0,
+    roadOffset: 0,
+    obstacles: [],
+    coins: [],
+    particles: [],
+    spawnTimer: 0,
+    coinTimer: 0,
+    shieldActive: hasUpgrade('shield'),
+    shieldUsed: false,
+    magnet: hasUpgrade('magnet'),
+    nitro: hasUpgrade('nitro'),
+    slowmo: hasUpgrade('slowmo'),
+    nitroTimer: hasUpgrade('nitro') ? 60 : 0,
+    slowmoActive: false,
+    slowmoCooldown: 0,
+    sparksEarned: 0,
+    shake: 0,
+    flashRed: 0,
+  };
+}
+
+function carColor(){
+  const c = CARS.find(c=>c.id===State.equippedCar) || CARS[0];
+  return c;
+}
+
+/* ================= INPUT ================= */
+function moveLane(dir){
+  if (!game || !game.running) return;
+  game.targetLane = Math.max(0, Math.min(LANES-1, game.targetLane + dir));
+}
+document.getElementById('touchLeft').addEventListener('pointerdown', ()=> moveLane(-1));
+document.getElementById('touchRight').addEventListener('pointerdown', ()=> moveLane(1));
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'ArrowLeft') moveLane(-1);
+  if (e.key === 'ArrowRight') moveLane(1);
+});
+
+/* ================= SPAWNING ================= */
+function spawnObstacle(){
+  const lane = Math.floor(Math.random()*LANES);
+  const types = ['car','cone','oil'];
+  const type = types[Math.floor(Math.random()*types.length)];
+  game.obstacles.push({ lane, y: H*0.08 - 60, type, hue: Math.random()*360 });
+}
+function spawnCoin(){
+  const lane = Math.floor(Math.random()*LANES);
+  const pattern = Math.random() < 0.3 ? 3 : 1;
+  for (let i=0;i<pattern;i++){
+    game.coins.push({ lane, y: H*0.08 - 60 - i*40, collected:false });
+  }
+}
+
+/* ================= UPDATE ================= */
+function update(dt){
+  if (!game.running) return;
+
+  // speed ramp
+  game.speed = Math.min(game.maxSpeed, game.baseSpeed + game.distance/900);
+  let effSpeed = game.speed;
+  if (game.nitroTimer > 0){ effSpeed *= 1.6; game.nitroTimer -= dt*60; }
+  if (game.slowmoActive){ effSpeed *= 0.4; game.slowmoCooldown -= dt*60; if (game.slowmoCooldown<=0) game.slowmoActive=false; }
+
+  game.distance += effSpeed * dt * 6;
+  game.roadOffset = (game.roadOffset + effSpeed*dt*60) % 80;
+
+  // lane easing
+  game.lane += (game.targetLane - game.lane) * Math.min(1, dt*10);
+  game.carX = laneX(game.lane);
+
+  // spawn
+  game.spawnTimer -= dt*60;
+  if (game.spawnTimer <= 0){
+    spawnObstacle();
+    game.spawnTimer = Math.max(28, 65 - game.speed*3);
+  }
+  game.coinTimer -= dt*60;
+  if (game.coinTimer <= 0){
+    spawnCoin();
+    game.coinTimer = Math.max(35, 90 - game.speed*2);
+  }
+
+  // move obstacles
+  for (const o of game.obstacles) o.y += effSpeed*dt*60;
+  game.obstacles = game.obstacles.filter(o=> o.y < H+100);
+
+  // move coins + magnet
+  for (const c of game.coins){
+    c.y += effSpeed*dt*60;
+    if (game.magnet){
+      const dx = game.carX - laneX(c.lane);
+      const dy = game.carY - c.y;
+      const dist = Math.hypot(dx,dy);
+      if (dist < 140){ c.lane += 0; c.magnetPull = true; }
+    }
+  }
+  game.coins = game.coins.filter(c=> c.y < H+50 && !c.collected);
+
+  // particles (exhaust)
+  if (Math.random() < 0.6){
+    game.particles.push({ x: game.carX + (Math.random()-0.5)*18, y: game.carY+34, life:1, vx:(Math.random()-0.5)*0.5, vy:effSpeed*0.7 });
+  }
+  for (const p of game.particles){ p.y += p.vy; p.x += p.vx; p.life -= dt*1.8; }
+  game.particles = game.particles.filter(p=> p.life > 0);
+
+  // collision - obstacles
+  for (const o of game.obstacles){
+    if (Math.abs(o.y - game.carY) < 38 && Math.round(game.lane) === o.lane && !o.hit){
+      const dx = Math.abs(laneX(o.lane) - game.carX);
+      if (dx < laneWidth*0.55){
+        o.hit = true;
+        if (game.shieldActive && !game.shieldUsed){
+          game.shieldUsed = true;
+          game.flashRed = 0;
+          game.shake = 8;
+        } else {
+          crash();
+          return;
+        }
+      }
+    }
+  }
+
+  // collision - coins (Sparks, no cap — converted to WIN tokens later in the Shop)
+  const magnetRange = game.magnet ? 130 : 40;
+  for (const c of game.coins){
+    if (c.collected) continue;
+    const dx = laneX(c.lane) - game.carX;
+    const dy = c.y - game.carY;
+    const dist = Math.hypot(dx,dy);
+    if (dist < magnetRange){
+      c.collected = true;
+      game.sparksEarned += 1;
+      spawnCoinPopup();
+    }
+  }
+
+  if (game.shake > 0) game.shake -= dt*40;
+  if (game.flashRed > 0) game.flashRed -= dt*2;
+
+  updateHUD();
+}
+
+function spawnCoinPopup(){
+  const el = document.getElementById('hudSparks');
+  el.classList.remove('coin-pop');
+  void el.offsetWidth;
+  el.classList.add('coin-pop');
+  setTimeout(()=> el.classList.remove('coin-pop'), 500);
+}
+
+function crash(){
+  game.running = false;
+  game.over = true;
+  game.shake = 20;
+  game.flashRed = 1;
+  const earnedSparks = game.sparksEarned;
+  State.sparks += earnedSparks;
+  const isRecord = Math.floor(game.distance) > State.bestDistance;
+  if (isRecord) State.bestDistance = Math.floor(game.distance);
+  saveSparks(); saveBest();
+  if (isRecord) submitGlobalScore();
+
+  State.leaderboard.push({ distance: Math.floor(game.distance), sparks: earnedSparks, date: Date.now() });
+  State.leaderboard.sort((a,b)=> b.distance - a.distance);
+  State.leaderboard = State.leaderboard.slice(0,10);
+  saveLeaderboard();
+
+  State.nextPlayAt = Date.now() + PLAY_LOCK_MS;
+  saveNextPlay();
+
+  reportGameScore(Math.floor(game.distance));
+
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+
+  setTimeout(()=> showGameOver(earnedSparks, isRecord), 400);
+}
+
+/* Upserts this player's personal-best distance into the global leaderboard
+   collection (one doc per user, keyed by their Telegram ID). No-ops when
+   Firebase isn't configured. */
+function submitGlobalScore(){
+  if (!db) return;
+  db.collection('leaderboard').doc(USER_ID).set({
+    name: USER_NAME,
+    distance: State.bestDistance,
+    updatedAt: Date.now()
+  }, { merge:true }).catch(e=> console.error('Leaderboard submit failed', e));
+}
+
+function updateHUD(){
+  document.getElementById('hudDistance').textContent = Math.floor(game.distance) + 'm';
+  document.getElementById('hudSparks').textContent = State.sparks + game.sparksEarned;
+}
+
+/* ================= RENDER ================= */
+function render(){
+  ctx.clearRect(0,0,W,H);
+
+  // horizon line - road now covers nearly the full screen so obstacles
+  // never travel through empty sky above the drawn road surface
+  const roadTop = H*0.08;
+
+  // sky gradient (thin strip above the road only)
+  const sky = ctx.createLinearGradient(0,0,0,roadTop);
+  sky.addColorStop(0,'#150E2A');
+  sky.addColorStop(1,'#0A0D14');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0,0,W,roadTop);
+
+  // distant skyline silhouette
+  ctx.fillStyle = '#161225';
+  for (let i=0;i<8;i++){
+    const bw = W/8;
+    const bh = 14 + (i*17 % 34);
+    ctx.fillRect(i*bw, roadTop-bh, bw-4, bh);
+  }
+
+  // ground (fills everything behind/around the road)
+  ctx.fillStyle = '#0c0e15';
+  ctx.fillRect(0,roadTop,W,H-roadTop);
+
+  const shakeX = game ? (Math.random()-0.5)*game.shake : 0;
+  const shakeY = game ? (Math.random()-0.5)*game.shake : 0;
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // road surface - spans from just below the horizon to the bottom of the screen
+  const roadGrad = ctx.createLinearGradient(0,roadTop,0,H);
+  roadGrad.addColorStop(0,'#1b1e2b');
+  roadGrad.addColorStop(1,'#20232f');
+  ctx.fillStyle = roadGrad;
+  ctx.fillRect(roadLeft, roadTop, roadWidth, H-roadTop);
+
+  // road edge glow lines
+  ctx.strokeStyle = 'rgba(0,229,255,0.5)';
+  ctx.lineWidth = 3;
+  ctx.shadowColor = '#00E5FF'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.moveTo(roadLeft,roadTop); ctx.lineTo(roadLeft,H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(roadLeft+roadWidth,roadTop); ctx.lineTo(roadLeft+roadWidth,H); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // lane dashes
+  ctx.strokeStyle = 'rgba(232,236,241,0.35)';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([26,22]);
+  const offset = game ? game.roadOffset : 0;
+  for (let i=1;i<LANES;i++){
+    const x = roadLeft + laneWidth*i;
+    ctx.lineDashOffset = -offset;
+    ctx.beginPath(); ctx.moveTo(x,roadTop); ctx.lineTo(x,H); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  if (game){
+    // particles
+    for (const p of game.particles){
+      ctx.globalAlpha = Math.max(0,p.life);
+      ctx.fillStyle = '#00E5FF';
+      ctx.beginPath(); ctx.arc(p.x,p.y,3*p.life,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // coins
+    for (const c of game.coins){
+      if (c.collected) continue;
+      drawCoin(laneX(c.lane), c.y);
+    }
+
+    // obstacles
+    for (const o of game.obstacles){
+      drawObstacle(laneX(o.lane), o.y, o.type, o.hue);
+    }
+
+    // player car
+    drawCar(game.carX, game.carY, carColor());
+  }
+
+  ctx.restore();
+
+  // red flash on crash
+  if (game && game.flashRed > 0){
+    ctx.fillStyle = `rgba(255,46,80,${game.flashRed*0.35})`;
+    ctx.fillRect(0,0,W,H);
+  }
+}
+
+function drawCoin(x,y){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.shadowColor = '#00E5FF'; ctx.shadowBlur = 14;
+  const grad = ctx.createRadialGradient(-3,-3,1,0,0,12);
+  grad.addColorStop(0,'#B9FBFF'); grad.addColorStop(1,'#00E5FF');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#003b45';
+  ctx.font = 'bold 13px Orbitron';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('⚡',0,1);
+  ctx.restore();
+}
+
+function drawObstacle(x,y,type,hue){
+  ctx.save();
+  ctx.translate(x,y);
+  if (type === 'car'){
+    ctx.shadowColor = `hsl(${hue},80%,55%)`; ctx.shadowBlur = 14;
+    ctx.fillStyle = `hsl(${hue},70%,45%)`;
+    roundRect(-16,-26,32,52,8); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    roundRect(-12,-10,24,16,3); ctx.fill();
+  } else if (type === 'cone'){
+    ctx.shadowColor='#FF8A00'; ctx.shadowBlur=10;
+    ctx.fillStyle = '#FF8A00';
+    ctx.beginPath(); ctx.moveTo(0,-20); ctx.lineTo(14,18); ctx.lineTo(-14,18); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-10,2,20,4);
+  } else {
+    ctx.fillStyle = 'rgba(10,10,15,0.7)';
+    ctx.beginPath(); ctx.ellipse(0,0,20,10,0,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawCar(x,y,carInfo){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.shadowColor = carInfo.glow; ctx.shadowBlur = 22;
+  ctx.fillStyle = carInfo.color;
+  roundRect(-17,-30,34,58,10); ctx.fill();
+  // windshield
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(15,20,30,0.75)';
+  roundRect(-11,-22,22,18,4); ctx.fill();
+  // headlight glow
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(-13,-29,6,4); ctx.fillRect(7,-29,6,4);
+  // shield ring
+  if (game && game.shieldActive && !game.shieldUsed){
+    ctx.strokeStyle = 'rgba(0,229,255,0.6)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor='#00E5FF'; ctx.shadowBlur=16;
+    ctx.beginPath(); ctx.arc(0,0,34,0,Math.PI*2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+/* ================= LOOP ================= */
+let lastTime = 0;
+function loop(ts){
+  const dt = Math.min(0.033, (ts - lastTime)/1000 || 0);
+  lastTime = ts;
+  if (game && game.running) update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ================= SCREEN MANAGEMENT ================= */
+const screens = {
+  menu: document.getElementById('menuScreen'),
+  gameOver: document.getElementById('gameOverScreen'),
+  shop: document.getElementById('shopScreen'),
+  lb: document.getElementById('lbScreen'),
+  pause: document.getElementById('pauseScreen'),
+  ad: document.getElementById('adScreen'),
+};
+function hideAll(){
+  Object.values(screens).forEach(s=>{ s.classList.add('hidden'); s.classList.remove('flex'); });
+}
+function showScreen(name){
+  hideAll();
+  screens[name].classList.remove('hidden');
+  screens[name].classList.add('flex');
+}
+
+function startGame(){
+  game = newGame();
+  game.running = true;
+  hideAll();
+  document.getElementById('hud').style.opacity = 1;
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+}
+
+function showGameOver(earnedSparks, isRecord){
+  document.getElementById('finalDistance').textContent = Math.floor(game.distance)+'m';
+  document.getElementById('finalTokens').textContent = '+'+earnedSparks+' ⚡';
+  document.getElementById('newRecordBadge').classList.toggle('hidden', !isRecord);
+  showScreen('gameOver');
+}
+
+document.getElementById('playBtn').addEventListener('click', attemptPlay);
+document.getElementById('retryBtn').addEventListener('click', attemptPlay);
+document.getElementById('menuFromOverBtn').addEventListener('click', ()=>{ refreshMenuUI(); showScreen('menu'); });
+document.getElementById('pauseBtn').addEventListener('click', ()=>{
+  if (!game || !game.running) return;
+  game.running = false;
+  showScreen('pause');
+});
+document.getElementById('resumeBtn').addEventListener('click', ()=>{
+  hideAll();
+  game.running = true;
+});
+document.getElementById('quitBtn').addEventListener('click', ()=>{
+  game = null;
+  refreshMenuUI();
+  showScreen('menu');
+});
+
+/* ================= SHOP ================= */
+let currentShopTab = 'cars';
+document.getElementById('shopBtn').addEventListener('click', ()=>{ currentShopTab='cars'; renderShop('cars'); renderConvertBar(); showScreen('shop'); });
+document.getElementById('shopBack').addEventListener('click', ()=>{ refreshMenuUI(); showScreen('menu'); });
+document.querySelectorAll('.shopTab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.shopTab').forEach(b=>{ b.classList.remove('tab-active'); b.classList.add('tab-inactive'); });
+    btn.classList.add('tab-active'); btn.classList.remove('tab-inactive');
+    currentShopTab = btn.dataset.tab;
+    renderShop(currentShopTab);
+  });
+});
+
+/* Sparks → WIN token conversion (SPARKS_PER_TOKEN Sparks = 1 WIN token) */
+function renderConvertBar(){
+  document.getElementById('shopSparksVal').textContent = '⚡ ' + State.sparks;
+  const convertible = Math.floor(State.sparks / SPARKS_PER_TOKEN);
+  const btn = document.getElementById('convertBtn');
+  if (convertible > 0){
+    btn.disabled = false;
+    btn.textContent = `Convert → ${convertible} 🪙`;
+  } else {
+    btn.disabled = true;
+    const remaining = SPARKS_PER_TOKEN - (State.sparks % SPARKS_PER_TOKEN);
+    btn.textContent = `Need ${remaining} more ⚡`;
+  }
+}
+document.getElementById('convertBtn').addEventListener('click', ()=>{
+  const convertible = Math.floor(State.sparks / SPARKS_PER_TOKEN);
+  if (convertible < 1) return;
+  State.sparks -= convertible * SPARKS_PER_TOKEN;
+  State.tokens += convertible;
+  saveSparks(); saveTokens();
+  renderConvertBar();
+  renderShop(currentShopTab);
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+});
+
+function renderShop(tab){
+  document.getElementById('shopTokens').textContent = State.tokens;
+  const grid = document.getElementById('shopGrid');
+  grid.innerHTML = '';
+  if (tab === 'cars'){
+    CARS.forEach(car=>{
+      const owned = State.ownedCars.includes(car.id);
+      const equipped = State.equippedCar === car.id;
+      const card = document.createElement('div');
+      card.className = 'shop-card rounded-2xl p-3' + (owned?' owned':'') + (equipped?' equipped':'');
+      card.innerHTML = `
+        <div class="h-16 flex items-center justify-center mb-2">
+          <div style="width:30px;height:52px;background:${car.color};border-radius:8px;box-shadow:0 0 18px ${car.glow}88;"></div>
+        </div>
+        <div class="font-display text-sm font-700 text-center mb-1">${car.name}</div>
+        <div class="text-center text-xs">
+          ${equipped ? '<span class="glow-amber" style="color:var(--amber)">EQUIPPED</span>' :
+            owned ? '<button class="equipBtn btn-ghost rounded-lg px-3 py-1 w-full">Equip</button>' :
+            `<button class="buyBtn btn-primary rounded-lg px-3 py-1 w-full text-xs">🪙 ${car.price}</button>`}
+        </div>`;
+      if (!owned){
+        card.querySelector('.buyBtn').addEventListener('click', ()=>{
+          if (State.tokens >= car.price){
+            State.tokens -= car.price;
+            State.ownedCars.push(car.id);
+            State.equippedCar = car.id;
+            saveTokens(); saveCars(); saveEquipped();
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            renderShop('cars');
+          } else if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+        });
+      } else if (!equipped){
+        card.querySelector('.equipBtn').addEventListener('click', ()=>{
+          State.equippedCar = car.id; saveEquipped(); renderShop('cars');
+        });
+      }
+      grid.appendChild(card);
+    });
+  } else {
+    UPGRADES.forEach(up=>{
+      const active = hasUpgrade(up.id);
+      const card = document.createElement('div');
+      card.className = 'shop-card rounded-2xl p-3' + (active?' owned':'');
+      card.innerHTML = `
+        <div class="text-3xl text-center mb-2">${up.icon}</div>
+        <div class="font-display text-sm font-700 text-center mb-1">${up.name}</div>
+        <div class="text-[11px] text-gray-400 text-center mb-2 leading-tight">${up.desc}</div>
+        <div class="text-center text-xs">
+          ${active ? `<span class="glow-cyan" style="color:var(--cyan)">ACTIVE · ${formatRemaining(State.ownedUpgrades[up.id]-Date.now())}</span>` :
+            `<button class="buyBtn btn-primary rounded-lg px-3 py-1 w-full text-xs">🪙 ${up.price} · 24h</button>`}
+        </div>`;
+      if (!active){
+        card.querySelector('.buyBtn').addEventListener('click', ()=>{
+          if (State.tokens >= up.price){
+            State.tokens -= up.price;
+            State.ownedUpgrades[up.id] = Date.now() + UPGRADE_DURATION_MS;
+            saveTokens(); saveUpgrades();
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            renderShop('upgrades');
+          } else if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+        });
+      }
+      grid.appendChild(card);
+    });
+  }
+}
+
+/* ================= LEADERBOARD ================= */
+document.getElementById('lbBtn').addEventListener('click', ()=>{ showScreen('lb'); renderLeaderboard(); });
+document.getElementById('lbBack').addEventListener('click', ()=>{ refreshMenuUI(); showScreen('menu'); });
+
+async function renderLeaderboard(){
+  const list = document.getElementById('lbList');
+  list.innerHTML = `<div class="text-center text-gray-500 mt-10 font-display text-sm">Loading…</div>`;
+
+  if (db){
+    try{
+      const snap = await db.collection('leaderboard').orderBy('distance','desc').limit(20).get();
+      list.innerHTML = '';
+      if (snap.empty){
+        list.innerHTML = `<div class="text-center text-gray-500 mt-10 font-display text-sm">No scores yet.<br>Hit the track and set the first record!</div>`;
+        return;
+      }
+      let rank = 0;
+      snap.forEach(doc=>{
+        rank += 1;
+        const d = doc.data();
+        const isMe = doc.id === USER_ID;
+        const row = document.createElement('div');
+        row.className = 'lb-row glass rounded-xl px-4 py-3 flex items-center justify-between';
+        if (isMe) row.style.border = '1px solid rgba(0,229,255,0.45)';
+        row.innerHTML = `
+          <div class="flex items-center gap-3">
+            <div class="rank font-display font-900 text-lg w-6">${rank}</div>
+            <div class="font-display font-700">${(d.name||'Player')}${isMe ? ' <span class="text-cyan-300">(you)</span>' : ''}</div>
+          </div>
+          <div class="font-display glow-cyan">${d.distance}m</div>`;
+        list.appendChild(row);
+      });
+      return;
+    } catch(e){
+      console.error('Leaderboard fetch failed, falling back to local history', e);
+    }
+  }
+
+  // Local fallback: this device's own run history (used when Firebase isn't configured)
+  list.innerHTML = '';
+  if (State.leaderboard.length === 0){
+    list.innerHTML = `<div class="text-center text-gray-500 mt-10 font-display text-sm">No scores yet.<br>Hit the track and set the first record!</div>`;
+    return;
+  }
+  State.leaderboard.forEach((entry, i)=>{
+    const row = document.createElement('div');
+    row.className = 'lb-row glass rounded-xl px-4 py-3 flex items-center justify-between';
+    row.innerHTML = `
+      <div class="flex items-center gap-3">
+        <div class="rank font-display font-900 text-lg w-6">${i+1}</div>
+        <div>
+          <div class="font-display font-700">${entry.distance}m</div>
+          <div class="text-[10px] text-gray-500">${new Date(entry.date).toLocaleDateString('en-US')}</div>
+        </div>
+      </div>
+      <div class="text-sm glow-cyan font-display">+${entry.sparks} ⚡</div>`;
+    list.appendChild(row);
+  });
+}
+
+/* ================= INIT ================= */
+document.getElementById('hud').style.opacity = 0;
+loadState();
+showScreen('menu');
+</script>
+</body>
+</html>
